@@ -13,10 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import base64
-import io
 import json
-import tarfile
 
 import netaddr
 from oslo_concurrency import processutils
@@ -273,21 +270,11 @@ def collect_logs(data, failures):
     :param failures: AccumulatedFailures object
     """
     try:
-        out, _e = utils.execute('journalctl', '--full', '--no-pager', '-b',
-                                '-n', '10000')
-    except (processutils.ProcessExecutionError, OSError):
-        LOG.warning('failed to get system journal')
+        logs = utils.get_journald_logs(lines=10000)
+    except errors.CommandExecutionError:
         return
 
-    journal = io.BytesIO(out.encode('utf-8'))
-    with io.BytesIO() as fp:
-        with tarfile.open(fileobj=fp, mode='w:gz') as tar:
-            tarinfo = tarfile.TarInfo('journal')
-            tarinfo.size = len(out)
-            tar.addfile(tarinfo, journal)
-
-        fp.seek(0)
-        data['logs'] = base64.b64encode(fp.getvalue())
+    data['logs'] = utils.gzip_and_b64encode_str(logs, file_name='journal')
 
 
 def collect_extra_hardware(data, failures):

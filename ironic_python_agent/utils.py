@@ -12,10 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import base64
 import copy
 import glob
+import io
 import os
 import shutil
+import tarfile
 import tempfile
 
 from oslo_concurrency import processutils
@@ -329,3 +332,49 @@ def guess_root_disk(block_devices, min_size_required=4 * units.Gi):
     for device in block_devices:
         if device.size >= min_size_required:
             return device
+
+
+def get_journald_logs(lines=None, units=None):
+    """Query the contents of the systemd journal.
+
+    :param lines: Maximum number of lines to retrieve from the
+                  logs. If None, return everything.
+    :param units: A list with the names of the units we should
+                  retrieve the logs from. If None retrieve the logs
+                  for everything.
+    """
+    cmd = ['journalctl', '--full', '--no-pager', '-b']
+    if lines is not None:
+        cmd.extend(['-n', str(lines)])
+    if units is not None:
+        [cmd.extend(['-u', u]) for u in units]
+
+    try:
+        out, _ = execute(*cmd)
+    except (processutils.ProcessExecutionError, OSError) as e:
+        error_msg = 'Failed to get system journal'
+        if units is not None:
+            error_msg += ' for the units "%s"' % ','.join(units)
+        error_msg += '. Error: %s' % e
+        LOG.error(error_msg)
+        raise errors.CommandExecutionError(error_msg)
+
+    return out
+
+
+def gzip_and_b64encode_str(string, file_name=None):
+    """Gzip and base64 encode a given string.
+
+    :param string: The string to be gzipped and base64 encoded.
+    :param file_name: The name for the file in the archive.
+    :returns: A gzipped and base64 encoded string.
+    """
+    iostr = io.BytesIO(string.encode('utf-8'))
+    with io.BytesIO() as fp:
+        with tarfile.open(fileobj=fp, mode='w:gz') as tar:
+            tarinfo = tarfile.TarInfo(name=file_name)
+            tarinfo.size = len(string)
+            tar.addfile(tarinfo, iostr)
+
+        fp.seek(0)
+        return base64.b64encode(fp.getvalue())
